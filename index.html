@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>文字アドベンチャー Web Edition</title>
+    <link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css" />
+    <script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
+    <style>
+        body { background-color: #111; color: #eee; font-family: 'MS Gothic', monospace; display: flex; flex-direction: column; align-items: center; }
+        #game-container { display: flex; gap: 20px; margin-top: 20px; }
+        #screen { background: black; border: 2px solid #444; padding: 10px; font-size: 24px; line-height: 1; white-space: pre; cursor: default; }
+        #ui-panel { background: #222; padding: 15px; border-radius: 8px; min-width: 200px; }
+        .status-bar { font-size: 18px; font-weight: bold; margin-bottom: 10px; background: #333; padding: 5px 10px; border-radius: 4px; }
+        .log { height: 100px; width: 400px; background: #050505; border: 1px solid #333; padding: 5px; overflow-y: auto; font-size: 14px; margin-top: 10px; color: #aaa; }
+        .legend-item { display: flex; align-items: center; margin-bottom: 4px; }
+        .char-box { width: 25px; font-weight: bold; text-align: center; margin-right: 10px; }
+    </style>
+</head>
+<body>
+
+    <h1>文字アドベンチャー Web</h1>
+
+    <div class="status-bar" id="status">HP: 10/10 | ATK: 1 | Coin: 0 | Key: 0</div>
+
+    <div id="game-container">
+        <div>
+            <div id="screen"></div>
+            <div class="log" id="log-output"></div>
+        </div>
+
+        <div id="ui-panel">
+            <h3>凡例</h3>
+            <div id="legend"></div>
+            <hr>
+            <p>【操作】<br>方向キー: 移動<br>Sキー: セーブ(コピー)<br>Lキー: ロード</p>
+        </div>
+    </div>
+
+    <script type="py">
+        from pyscript import display, window
+        import base64
+
+        class WebGame:
+            def __init__(self):
+                self.hp, self.max_hp, self.attack, self.coins = 10, 10, 1, 0
+                self.inventory = {"K": 0, "S": 0, "H": 0}
+                self.width, self.height = 10, 5
+                self.map_data = [["." for _ in range(self.width)] for _ in range(self.height)]
+                self.px, self.py = 1, 1
+                self.colors = {"@": "white", "#": "#444", "K": "yellow", "D": "orange", "S": "#aaf", "H": "#5f5", "C": "gold", "E": "red", "W": "magenta", "G": "cyan", ".": "#222"}
+                
+                self.render_legend()
+                self.update_ui()
+                
+                # キーイベント登録
+                window.addEventListener("keydown", self.handle_keypress)
+
+            def update_ui(self):
+                status = f"HP: {self.hp}/{self.max_hp} | ATK: {self.attack} | 金: {self.coins} | 鍵: {self.inventory['K']} | 剣: {self.inventory['S']} | 薬: {self.inventory['H']}"
+                display(status, target="status", append=False)
+                self.draw_map()
+
+            def draw_map(self):
+                html_map = ""
+                for y in range(self.height):
+                    for x in range(self.width):
+                        char = "@" if x == self.px and y == self.py else self.map_data[y][x]
+                        color = self.colors.get(char, "white")
+                        html_map += f'<span style="color:{color}">{char}</span>'
+                    html_map += "\n"
+                display(html_map, target="screen", append=False, html=True)
+
+            def log(self, msg):
+                log_div = window.document.getElementById("log-output")
+                log_div.innerHTML = f"> {msg}<br>" + log_div.innerHTML
+
+            def handle_keypress(self, event):
+                key = event.key
+                if key == "ArrowUp": self.move(0, -1)
+                elif key == "ArrowDown": self.move(0, 1)
+                elif key == "ArrowLeft": self.move(-1, 0)
+                elif key == "ArrowRight": self.move(1, 0)
+                elif key.lower() == "s": self.save()
+                elif key.lower() == "l": self.load()
+
+            def move(self, dx, dy):
+                nx, ny = self.px + dx, self.py + dy
+                if not (0 <= ny < self.height and 0 <= nx < self.width): return
+                target = self.map_data[ny][nx]
+                if target == "#": return
+
+                if target == "E":
+                    if self.attack >= 2:
+                        self.log("敵を倒した！")
+                        self.map_data[ny][nx] = "."
+                    else:
+                        self.hp -= 3
+                        self.log("ダメージを受けた！ HP-3")
+                        if self.hp <= 0:
+                            window.alert("ゲームオーバー")
+                            self.reset()
+                            return
+                        self.update_ui()
+                        return
+
+                if target in self.inventory:
+                    self.inventory[target] += 1
+                    if target == "S": self.attack += 1
+                    if target == "H":
+                        self.inventory["H"] -= 1
+                        self.hp = min(self.max_hp, self.hp + 5)
+                    self.map_data[ny][nx] = "."
+                elif target == "C":
+                    self.coins += 10
+                    self.map_data[ny][nx] = "."
+                elif target == "D":
+                    if self.inventory["K"] > 0:
+                        self.inventory["K"] -= 1
+                        self.map_data[ny][nx] = "."
+                    else:
+                        self.log("鍵が必要だ")
+                        return
+                elif target == "G":
+                    window.alert("クリア！")
+                    self.reset()
+                    return
+
+                self.px, self.py = nx, ny
+                if target == "W":
+                    ws = [(x,y) for y in range(self.height) for x in range(self.width) if self.map_data[y][x]=="W"]
+                    for wx, wy in ws:
+                        if (wx, wy) != (nx, ny): self.px, self.py = wx, wy; break
+
+                self.update_ui()
+
+            def save(self):
+                m_str = "".join(["".join(r) for r in self.map_data])
+                raw = f"{self.width}_{self.height}_{self.px}_{self.py}_{self.hp}_{self.max_hp}_{self.attack}_{self.coins}_{self.inventory['K']}_{self.inventory['S']}_{self.inventory['H']}_{m_str}"
+                code = base64.b64encode(raw.encode()).decode()
+                window.prompt("復活の呪文（コピーしてください）", code)
+
+            def load(self):
+                code = window.prompt("呪文を入力してください")
+                if not code: return
+                try:
+                    p = base64.b64decode(code.encode()).decode().split("_")
+                    self.width, self.height = int(p[0]), int(p[1])
+                    self.px, self.py = int(p[2]), int(p[3])
+                    self.hp, self.max_hp, self.attack, self.coins = int(p[4]), int(p[5]), int(p[6]), int(p[7])
+                    self.inventory["K"], self.inventory["S"], self.inventory["H"] = int(p[8]), int(p[9]), int(p[10])
+                    self.map_data = [list(p[11][i:i+self.width]) for i in range(0, len(p[11]), self.width)]
+                    self.update_ui()
+                except: self.log("ロード失敗")
+
+            def reset(self):
+                self.hp, self.attack, self.coins = 10, 1, 0
+                self.inventory = {"K":0,"S":0,"H":0}
+                self.px, self.py = 1, 1
+                self.update_status()
+
+            def render_legend(self):
+                legend_div = window.document.getElementById("legend")
+                items = [("@", "YOU"), ("#", "壁"), ("K", "鍵"), ("D", "扉"), ("S", "剣"), ("H", "薬"), ("C", "金"), ("E", "敵"), ("W", "穴"), ("G", "出口")]
+                for c, n in items:
+                    color = self.colors.get(c, "white")
+                    legend_div.innerHTML += f'<div class="legend-item"><span class="char-box" style="color:{color}">{c}</span><span>: {n}</span></div>'
+
+        game = WebGame()
+    </script>
+</body>
+</html>
